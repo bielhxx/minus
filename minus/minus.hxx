@@ -19,6 +19,10 @@
 //#include "Eigen-latest/Core"
 #include "Eigen/Core"
 
+// Gabriel (12-06-2025): Add stuff for test
+#include <fstream>
+#include "Eigen/Dense"
+
 #define unlikely(expr) __builtin_expect(!!(expr),0)
 #define likely(expr)   __builtin_expect(!!(expr),1)
 
@@ -134,7 +138,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
     v::copy(s_s, x0);
     *t0 = 0; *dt = t_step;
     char predictor_successes = 0;
-
+    //std::cout << sol_min << std::endl;
     // track H(x,t) for t in [0,1]
     // TODO: due to precision, it is best from 1 to 0 as Bertini/Wampler suggests
     while (likely(t_s->status == PROCESSING && 1. - *t0 > the_smallest_number)) {
@@ -162,6 +166,44 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
       evaluate_Hxt(xt, params, Hxt); // Outputs Hxt
       // dx4_eigen = lu.compute(AA).solve(bb);
+      // Gabriel: test hardcoded
+      // Gabriel (09-12-2025): Output into file to study for now since Eigen is being a pussy!!
+      // Gabriel Saving each preditor dx1
+      if(sol_n == sol_min) {
+        MatrixXcd vol = AA; // Copy Hxt at first
+        vol = vol.block<14,14>(0,0);
+        //for (unsigned i = 0; i < 14; ++i) 
+        //  for (unsigned j = 0; j < 14; ++j)
+        //    vol(i,j) = AA(i,j);
+        std::ofstream outf("Hxt_matrix_output_at_step_0_dx1.txt");
+        outf << vol << std::endl;
+        outf.close();
+        //JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+        //VectorXd singval = svd.singularValues();
+        //std::cout << "Its singular values are:" << std::endl << singval << std::endl;
+        //std::cout << std::endl<< "Volume of dx1 at first iteration is:" << std::endl << singval.prod() << std::endl<< std::endl;
+        //std::cout << std::endl<< "Condition number of dx1 at first iteration is:" << std::endl << singval(0)/singval(13) << std::endl<< std::endl;
+
+      }
+      // Gabriel (12-12-2025): Experimental setup threshold parameters
+      double volthresh = 1e-20; // det|jac|_(x0,t0+dt) approx 0
+      double cond_thresh = 1e4; // sigma_max/sigma_min too high at step
+      double epsilon_svd = 1e-6; // sigma_i too low
+      {
+      MatrixXcd vol = AA; // Copy Hxt at first
+      vol = vol.block<14,14>(0,0); // Pick just Hx 
+      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      VectorXd singval = svd.singularValues(); // perform SVD
+      // Zero sigma if below threshold
+      for (unsigned i = 0; i < 14; ++i)
+        if (singval(i) < epsilon_svd)
+          singval(i) = 0;
+      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      double condition_number = singval(0)/singval(13); // c at curr step
+      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
+                                                             // goes to the next
+        break;
+      }
       lsolve<P,F>(AA, dx4);
       
       // dx2
@@ -174,6 +216,31 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       *t += one_half_dt;  // t0+.5dt
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
+      // Gabriel Daving each preditor dx2
+      if(sol_n == sol_min) {
+        Matrix<std::complex<double>, 14, 14> vol;
+        for (unsigned i = 0; i < 14; ++i) 
+          for (unsigned j = 0; j < 14; ++j)
+            vol(i,j) = AA(i,j);
+        std::ofstream outf("Hxt_matrix_output_at_step_0_dx2.txt");
+        outf << vol << std::endl;
+        outf.close();
+      }
+      {
+      MatrixXcd vol = AA; // Copy Hxt at first
+      vol = vol.block<14,14>(0,0); // Pick just Hx 
+      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      VectorXd singval = svd.singularValues(); // perform SVD
+      // Zero sigma if below threshold
+      for (unsigned i = 0; i < 14; ++i)
+        if (singval(i) < epsilon_svd)
+          singval(i) = 0;
+      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      double condition_number = singval(0)/singval(13); // c at curr step
+      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
+                                                             // goes to the next
+        break;
+      }
       lsolve<P,F>(AA, dxi);
 
       // dx3
@@ -184,6 +251,31 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       v::add_to_self(dx4, dxi);
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
+      // Gabriel Daving each preditor dx3
+      if(sol_n == sol_min) {
+        Matrix<std::complex<double>, 14, 14> vol;
+        for (unsigned i = 0; i < 14; ++i) 
+          for (unsigned j = 0; j < 14; ++j)
+            vol(i,j) = AA(i,j);
+        std::ofstream outf("Hxt_matrix_output_at_step_0_dx3.txt");
+        outf << vol << std::endl;
+        outf.close();
+      }
+      {
+      MatrixXcd vol = AA; // Copy Hxt at first
+      vol = vol.block<14,14>(0,0); // Pick just Hx 
+      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      VectorXd singval = svd.singularValues(); // perform SVD
+      // Zero sigma if below threshold
+      for (unsigned i = 0; i < 14; ++i)
+        if (singval(i) < epsilon_svd)
+          singval(i) = 0;
+      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      double condition_number = singval(0)/singval(13); // c at curr step
+      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
+                                                             // goes to the next
+        break;
+      }
       lsolve<P,F>(AA, dxi);
 
       // dx4
@@ -195,6 +287,31 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       *t = *t0 + *dt;               // t0+dt
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
+      // Gabriel Daving each preditor dx4
+      if(sol_n == sol_min) {
+        Matrix<std::complex<double>, 14, 14> vol;
+        for (unsigned i = 0; i < 14; ++i) 
+          for (unsigned j = 0; j < 14; ++j)
+            vol(i,j) = AA(i,j);
+        std::ofstream outf("Hxt_matrix_output_at_step_0_dx4.txt");
+        outf << vol << std::endl;
+        outf.close();
+      }
+      {
+      MatrixXcd vol = AA; // Copy Hxt at first
+      vol = vol.block<14,14>(0,0); // Pick just Hx 
+      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      VectorXd singval = svd.singularValues(); // perform SVD
+      // Zero sigma if below threshold
+      for (unsigned i = 0; i < 14; ++i)
+        if (singval(i) < epsilon_svd)
+          singval(i) = 0;
+      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      double condition_number = singval(0)/singval(13); // c at curr step
+      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
+                                                             // goes to the next
+        break;
+      }
       lsolve<P,F>(AA, dxi);
       v::multiply_scalar_to_self(dxi, *dt);
       v::add_to_self(dx4, dxi);
@@ -236,6 +353,36 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         ++n_corr_steps;
         evaluate_HxH(x1t1, params, HxH);
         memoize_HxH<P,F>(HxH);//, ycHxH);
+      // Gabriel Daving each preditor dx4
+      if(n_corr_steps-1 ==0) {
+        Matrix<std::complex<double>, 14, 14> vol;
+        for (unsigned i = 0; i < 14; ++i) 
+          for (unsigned j = 0; j < 14; ++j)
+            vol(i,j) = AA(i,j);
+        std::ofstream outf("HxH_matrix_output_at_step_0.txt");
+        outf << vol << std::endl;
+        outf.close();
+      }
+      {
+        // Gabriel(12-11-2025): Create Jacobian and condition number restriction:
+        // Standalone det|Hx| does not say too much since det|Hx| = prod(singularValues) and we can have a singular value many on 1e-4, but when combined with the
+        // condition number I can have a clear picture since it depends solely on
+        // s_0 and s_13 (c = s_0/s_13) where if S_13 is too low, the condition
+        // number will skyrocket being ill-conditioned.   
+        MatrixXcd vol = AA; // Copy Hxt at first
+        vol = vol.block<14,14>(0,0); // Pick just Hx 
+        JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+        VectorXd singval = svd.singularValues(); // perform SVD
+        // Zero sigma if below threshold
+        for (unsigned i = 0; i < 14; ++i)
+          if (singval(i) < epsilon_svd)
+            singval(i) = 0;
+        double jacobian_volume = singval.prod(); // Det|Hx| at curr step
+        double condition_number = singval(0)/singval(13); // c at curr step
+        if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
+                                                               // goes to the next
+          break;
+      }
         lsolve<P,F>(AA, dx);
         v::add_to_self(x1t1, dx);
         is_successful = v::norm2(dx) < s.epsilon2_ * v::norm2(x1t1); // |dx|^2/|x1|^2 < eps2
