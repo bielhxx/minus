@@ -89,6 +89,10 @@ class minus_core { // fully static, not to be instantiated - just used for templ
     F t;               // last value of parameter t used
     unsigned num_steps;  // number of steps taken along the path
     solution_status status;
+    //\Gabriel (12-12-2025): Added variables 
+    F condition_number_Hx[500]; // condition_number_Hx 
+    F det_Hx[500]; // Determinant of Hx
+    F time[500]; // time step 
     solution() : num_steps(0), status(UNDETERMINED) { }
   };
 
