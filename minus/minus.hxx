@@ -128,6 +128,11 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
   //  alignas(64) C<F> ycHxH[13];
   // memoization_init() : 
 
+  double jacobian_volume; // Det|Hx| at curr step
+  double condition_number; // c at curr step
+  double volthresh = 1e-20; // det|jac|_(x0,t0+dt) approx 0
+  double cond_thresh = 1e6; // sigma_max/sigma_min too high at step
+  double epsilon_svd = 1e-6; // sigma_i too low
   // C<F> previous[13];
   const F &t_step = s.init_dt_;  // initial step
   solution *t_s = raw_solutions + sol_min;  // current target solution
@@ -169,6 +174,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       // Gabriel: test hardcoded
       // Gabriel (09-12-2025): Output into file to study for now since Eigen is being a pussy!!
       // Gabriel Saving each preditor dx1
+#if 0
       if(sol_n == sol_min) {
         MatrixXcd vol = AA; // Copy Hxt at first
         vol = vol.block<14,14>(0,0);
@@ -178,17 +184,15 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         std::ofstream outf("Hxt_matrix_output_at_step_0_dx1.txt");
         outf << vol << std::endl;
         outf.close();
-        //JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
-        //VectorXd singval = svd.singularValues();
-        //std::cout << "Its singular values are:" << std::endl << singval << std::endl;
-        //std::cout << std::endl<< "Volume of dx1 at first iteration is:" << std::endl << singval.prod() << std::endl<< std::endl;
-        //std::cout << std::endl<< "Condition number of dx1 at first iteration is:" << std::endl << singval(0)/singval(13) << std::endl<< std::endl;
+        JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+        VectorXd singval = svd.singularValues();
+        std::cout << "Its singular values are:" << std::endl << singval << std::endl;
+        std::cout << std::endl<< "Volume of dx1 at first iteration is:" << std::endl << singval.prod() << std::endl<< std::endl;
+        std::cout << std::endl<< "Condition number of dx1 at first iteration is:" << std::endl << singval(0)/singval(13) << std::endl<< std::endl;
 
       }
+#endif
       // Gabriel (12-12-2025): Experimental setup threshold parameters
-      double volthresh = 1e-20; // det|jac|_(x0,t0+dt) approx 0
-      double cond_thresh = 1e4; // sigma_max/sigma_min too high at step
-      double epsilon_svd = 1e-6; // sigma_i too low
       {
       MatrixXcd vol = AA; // Copy Hxt at first
       vol = vol.block<14,14>(0,0); // Pick just Hx 
@@ -198,11 +202,12 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       for (unsigned i = 0; i < 14; ++i)
         if (singval(i) < epsilon_svd)
           singval(i) = 0;
-      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      double condition_number = singval(0)/singval(13); // c at curr step
-      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
-                                                             // goes to the next
-        break;
+      jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      condition_number = singval(0)/singval(13); // c at curr step
+      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      //  break;
+      //}
       }
       lsolve<P,F>(AA, dx4);
       
@@ -216,7 +221,8 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       *t += one_half_dt;  // t0+.5dt
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
-      // Gabriel Daving each preditor dx2
+#if 0
+      // Gabriel Saving each preditor dx2
       if(sol_n == sol_min) {
         Matrix<std::complex<double>, 14, 14> vol;
         for (unsigned i = 0; i < 14; ++i) 
@@ -226,6 +232,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf << vol << std::endl;
         outf.close();
       }
+#endif
       {
       MatrixXcd vol = AA; // Copy Hxt at first
       vol = vol.block<14,14>(0,0); // Pick just Hx 
@@ -235,11 +242,12 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       for (unsigned i = 0; i < 14; ++i)
         if (singval(i) < epsilon_svd)
           singval(i) = 0;
-      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      double condition_number = singval(0)/singval(13); // c at curr step
-      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
-                                                             // goes to the next
-        break;
+      jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      condition_number = singval(0)/singval(13); // c at curr step
+      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      //  break;
+      //}
       }
       lsolve<P,F>(AA, dxi);
 
@@ -251,6 +259,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       v::add_to_self(dx4, dxi);
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
+#if 0
       // Gabriel Daving each preditor dx3
       if(sol_n == sol_min) {
         Matrix<std::complex<double>, 14, 14> vol;
@@ -261,6 +270,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf << vol << std::endl;
         outf.close();
       }
+#endif
       {
       MatrixXcd vol = AA; // Copy Hxt at first
       vol = vol.block<14,14>(0,0); // Pick just Hx 
@@ -270,11 +280,12 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       for (unsigned i = 0; i < 14; ++i)
         if (singval(i) < epsilon_svd)
           singval(i) = 0;
-      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      double condition_number = singval(0)/singval(13); // c at curr step
-      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
-                                                             // goes to the next
-        break;
+      jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      condition_number = singval(0)/singval(13); // c at curr step
+      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      //  break;
+      //}
       }
       lsolve<P,F>(AA, dxi);
 
@@ -287,6 +298,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       *t = *t0 + *dt;               // t0+dt
       evaluate_Hxt(xt, params, Hxt);
       memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
+#if 0
       // Gabriel Daving each preditor dx4
       if(sol_n == sol_min) {
         Matrix<std::complex<double>, 14, 14> vol;
@@ -297,6 +309,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf << vol << std::endl;
         outf.close();
       }
+#endif
       {
       MatrixXcd vol = AA; // Copy Hxt at first
       vol = vol.block<14,14>(0,0); // Pick just Hx 
@@ -306,11 +319,12 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       for (unsigned i = 0; i < 14; ++i)
         if (singval(i) < epsilon_svd)
           singval(i) = 0;
-      double jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      double condition_number = singval(0)/singval(13); // c at curr step
-      if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
-                                                             // goes to the next
-        break;
+      jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      condition_number = singval(0)/singval(13); // c at curr step
+      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      //  break;
+      //}
       }
       lsolve<P,F>(AA, dxi);
       v::multiply_scalar_to_self(dxi, *dt);
@@ -353,7 +367,8 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         ++n_corr_steps;
         evaluate_HxH(x1t1, params, HxH);
         memoize_HxH<P,F>(HxH);//, ycHxH);
-      // Gabriel Daving each preditor dx4
+#if 0
+      // Gabriel Saving corrector first step
       if(n_corr_steps-1 ==0) {
         Matrix<std::complex<double>, 14, 14> vol;
         for (unsigned i = 0; i < 14; ++i) 
@@ -363,6 +378,7 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf << vol << std::endl;
         outf.close();
       }
+#endif
       {
         // Gabriel(12-11-2025): Create Jacobian and condition number restriction:
         // Standalone det|Hx| does not say too much since det|Hx| = prod(singularValues) and we can have a singular value many on 1e-4, but when combined with the
@@ -377,11 +393,12 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         for (unsigned i = 0; i < 14; ++i)
           if (singval(i) < epsilon_svd)
             singval(i) = 0;
-        double jacobian_volume = singval.prod(); // Det|Hx| at curr step
-        double condition_number = singval(0)/singval(13); // c at curr step
-        if (jacobian_volume < volthresh && condition_number > cond_thresh) // If blows up,
-                                                               // goes to the next
-          break;
+        jacobian_volume = singval.prod(); // Det|Hx| at curr step
+        condition_number = singval(0)/singval(13); // c at curr step
+      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      //  break;
+      //}
       }
         lsolve<P,F>(AA, dx);
         v::add_to_self(x1t1, dx);
@@ -404,11 +421,19 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       }
       if (unlikely(v::norm2(x0) > s.infinity_threshold2_))
         t_s->status = INFINITY_FAILED;
+      //\Gabriel: Added raw analytical data to enhance minus
+      //\Local test on Chicago using worst case scenario indicates that
+      //condition number --> inf if sigma_min --> 0
+      t_s->det_Hx[t_s->num_steps] = jacobian_volume;
+      t_s->condition_number_Hx[t_s->num_steps] = condition_number;
+      t_s->time[t_s->num_steps] = *t0;
+      //\Gabriel: before my additions only had this!
       ++t_s->num_steps;
     } // while (t loop)
     memcpy(t_s, x0t0, (f::nve*2+1)*sizeof(F));
     if (t_s->status == PROCESSING) t_s->status = REGULAR;
     ++t_s; s_s += f::nve;
+
   } // outer solution loop
 }
 
