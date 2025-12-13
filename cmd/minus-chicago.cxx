@@ -167,7 +167,41 @@ print_num_steps(M::solution solutions[M::nsols])
   }
   LOG("total number of steps: " << sum);
 }
-
+//\Gabriel (12-12-2025): New features Print det, condition number
+//\of each solution as raw data
+void print_volume(M::solution solutions[M::nsols]){
+  LOG("solution id x volume:");
+  std::cout<< "solution id x volume:"<< std::endl;
+  unsigned sum=0;
+  for (unsigned s=0; s < M::nsols; ++s) {
+    for(unsigned v=0; v < solutions[s].num_steps; ++v){
+      LOG(s << " " << solutions[s].det_Hx[v]);
+      std::cout << s << " " << solutions[s].det_Hx[v] << std::endl;
+    }
+  }
+}
+void print_cn(M::solution solutions[M::nsols]){
+  LOG("solution id x condition_number:");
+  std::cout<< "solution id x condition_number:"<< std::endl;
+  unsigned sum=0;
+  for (unsigned s=0; s < M::nsols; ++s) {
+    for(unsigned v=0; v < solutions[s].num_steps; ++v) {
+      LOG(s << " " << solutions[s].condition_number_Hx[v]);
+      std::cout << s << " " << solutions[s].condition_number_Hx[v] << std::endl;
+    }
+  }
+}
+void print_time(M::solution solutions[M::nsols]){
+  LOG("solution id x time:");
+  std::cout<< "solution id x time:"<< std::endl;
+  unsigned sum=0;
+  for (unsigned s=0; s < M::nsols; ++s) {
+    for(unsigned v=0; v < solutions[s].num_steps; ++v) {
+      LOG(s << " " << solutions[s].time[v]);
+      std::cout << s << " " << solutions[s].time[v] << std::endl;
+    }
+  }
+}
 // Output solutions in ASCII matlab format
 //
 // ---------------------------------------------------------
@@ -576,6 +610,9 @@ main(int argc, char **argv)
     auto duration = duration_cast<milliseconds>(t2 - t1).count();
     #ifdef M_VERBOSE
     print_num_steps(solutions);
+    print_volume(solutions);
+    print_cn(solutions);
+    print_time(solutions);
     std::cerr << "LOG \033[1;32mTime of solver: " << duration << "ms\e[m" << std::endl;
     #endif
   }
