@@ -127,11 +127,31 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
   //  alignas(64) C<F> ycHxt[16]; 
   //  alignas(64) C<F> ycHxH[13];
   // memoization_init() : 
-
+  //\Gabriel (added on 12-12-2025--> made by Gabriel A.)
+  //\brief: Thresholding volume and condition number.
+  //\Sirves to indicate if an solution f(x,t) = 0 is "sucked" to a
+  //\singularity. Initial experiments started on (12-13-2025) indicated
+  //\that volumes (det(Hx|_(x_0,t_0)) < 1e-33 and condition numbers
+  //\(sigma_max/sigma_min) > 16 generates ill conditioned solutions at the
+  //\iteration, leading to a singularity. Using as a basis, the idea now is
+  //\reduce these numbers to investigate how much can we reduce the time and find
+  //\the solution in the worst scenario.
+  //(12-18-2025)
+  //\MiNuS bin Chicacago on worst scenario the volume and (highly controlled
+  //\experiment) I was able to obtain results on GT for volume threshold of
+  //1e-32 and condition number threshold of 1e^12.
+  //XXX TODO: Decrease and see on openMVG. Experiment Use Capitol high dataset
+  //and see if I can get same than published on ENMC 2023. current max core temp
+  //was to 80ºC from 100ºC
+  //\Tests on Ctest (make test) works fine.
   double jacobian_volume; // Det|Hx| at curr step
   double condition_number; // c at curr step
-  double volthresh = 1e-20; // det|jac|_(x0,t0+dt) approx 0
-  double cond_thresh = 1e6; // sigma_max/sigma_min too high at step
+  double volthresh = 1e-5; // det|jac|_(x0,t0+dt) approx 0. 1e-32 works on
+                            // highly controlled but not in real environment
+  double cond_thresh = 1e2; // sigma_max/sigma_min too high at step. 1e12 works on
+                            // highly controlled but not in real environment
+  //double volthresh = 1e-32;
+  //double cond_thresh = 1e12;
   double epsilon_svd = 1e-6; // sigma_i too low
   // C<F> previous[13];
   const F &t_step = s.init_dt_;  // initial step
@@ -193,22 +213,22 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       }
 #endif
       // Gabriel (12-12-2025): Experimental setup threshold parameters
-      {
-      MatrixXcd vol = AA; // Copy Hxt at first
-      vol = vol.block<14,14>(0,0); // Pick just Hx 
-      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
-      VectorXd singval = svd.singularValues(); // perform SVD
-      // Zero sigma if below threshold
-      for (unsigned i = 0; i < 14; ++i)
-        if (singval(i) < epsilon_svd)
-          singval(i) = 0;
-      jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      condition_number = singval(0)/singval(13); // c at curr step
-      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
-      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
-      //  break;
+      //{
+      //MatrixXcd vol = AA; // Copy Hxt at first
+      //vol = vol.block<14,14>(0,0); // Pick just Hx
+      //JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      //VectorXd singval = svd.singularValues(); // perform SVD
+      //// Zero sigma if below threshold
+      //for (unsigned i = 0; i < 14; ++i)
+      //  if (singval(i) < epsilon_svd)
+      //    singval(i) = 0;
+      //jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      //condition_number = singval(0)/singval(13); // c at curr step
+      ////if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      ////  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      ////  break;
+      ////}
       //}
-      }
       lsolve<P,F>(AA, dx4);
       
       // dx2
@@ -233,22 +253,22 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf.close();
       }
 #endif
-      {
-      MatrixXcd vol = AA; // Copy Hxt at first
-      vol = vol.block<14,14>(0,0); // Pick just Hx 
-      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
-      VectorXd singval = svd.singularValues(); // perform SVD
-      // Zero sigma if below threshold
-      for (unsigned i = 0; i < 14; ++i)
-        if (singval(i) < epsilon_svd)
-          singval(i) = 0;
-      jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      condition_number = singval(0)/singval(13); // c at curr step
-      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
-      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
-      //  break;
+      //{
+      //MatrixXcd vol = AA; // Copy Hxt at first
+      //vol = vol.block<14,14>(0,0); // Pick just Hx
+      //JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      //VectorXd singval = svd.singularValues(); // perform SVD
+      //// Zero sigma if below threshold
+      //for (unsigned i = 0; i < 14; ++i)
+      //  if (singval(i) < epsilon_svd)
+      //    singval(i) = 0;
+      //jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      //condition_number = singval(0)/singval(13); // c at curr step
+      ////if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      ////  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      ////  break;
+      ////}
       //}
-      }
       lsolve<P,F>(AA, dxi);
 
       // dx3
@@ -271,22 +291,22 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         outf.close();
       }
 #endif
-      {
-      MatrixXcd vol = AA; // Copy Hxt at first
-      vol = vol.block<14,14>(0,0); // Pick just Hx 
-      JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
-      VectorXd singval = svd.singularValues(); // perform SVD
-      // Zero sigma if below threshold
-      for (unsigned i = 0; i < 14; ++i)
-        if (singval(i) < epsilon_svd)
-          singval(i) = 0;
-      jacobian_volume = singval.prod(); // Det|Hx| at curr step
-      condition_number = singval(0)/singval(13); // c at curr step
-      //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
-      //  std::cout << "ill-conditioned solution\n";                       // goes to the next
-      //  break;
+      //{
+      //MatrixXcd vol = AA; // Copy Hxt at first
+      //vol = vol.block<14,14>(0,0); // Pick just Hx
+      //JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
+      //VectorXd singval = svd.singularValues(); // perform SVD
+      //// Zero sigma if below threshold
+      //for (unsigned i = 0; i < 14; ++i)
+      //  if (singval(i) < epsilon_svd)
+      //    singval(i) = 0;
+      //jacobian_volume = singval.prod(); // Det|Hx| at curr step
+      //condition_number = singval(0)/singval(13); // c at curr step
+      ////if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
+      ////  std::cout << "ill-conditioned solution\n";                       // goes to the next
+      ////  break;
+      ////}
       //}
-      }
       lsolve<P,F>(AA, dxi);
 
       // dx4
@@ -390,9 +410,9 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
         JacobiSVD<MatrixXcd, FullPivHouseholderQRPreconditioner> svd(vol);
         VectorXd singval = svd.singularValues(); // perform SVD
         // Zero sigma if below threshold
-        for (unsigned i = 0; i < 14; ++i)
-          if (singval(i) < epsilon_svd)
-            singval(i) = 0;
+        //for (unsigned i = 0; i < 14; ++i)
+        //  if (singval(i) < epsilon_svd)
+        //    singval(i) = 0;
         jacobian_volume = singval.prod(); // Det|Hx| at curr step
         condition_number = singval(0)/singval(13); // c at curr step
       //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
@@ -424,6 +444,17 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       //\Gabriel: Added raw analytical data to enhance minus
       //\Local test on Chicago using worst case scenario indicates that
       //condition number --> inf if sigma_min --> 0
+      //Gabriel (12-16-2025): Added breakpoint
+      //\Basically if the current iteration leads to a singularity, toss it out.
+      //\Why OR instead of AND?
+      //\Using AND assumes an unhinged scenario which the iteration is so
+      //\ill-conditioned that the only option is spit into the trash. The
+      //\average case is trickier because you can have a "well behaved" volume
+      //\and sigma_min numerically zero skyrocketing the condition number or in
+      //\contrast sigma_max and sigma_min near in orders of magnetude but
+      //\every singular value is near zero.
+      if (jacobian_volume < volthresh && condition_number > cond_thresh)
+        break;
       t_s->det_Hx[t_s->num_steps] = jacobian_volume;
       t_s->condition_number_Hx[t_s->num_steps] = condition_number;
       t_s->time[t_s->num_steps] = *t0;
