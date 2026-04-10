@@ -6,18 +6,13 @@
 // \date Created: Fri Feb  8 17:42:49 EST 2019
 // 
 #include <cstdio>
-#include <iostream>
 #include <iomanip>
 #include <cstring>
 #include "minus.h"
 #include "internal-util.hxx"
 
-// not really necessary:
-#define EIGEN_UNROLLING_LIMIT 1000 
-// _really_ necessary:
-#define EIGEN_STRONG_INLINE __attribute__((always_inline)) inline
-//#include "Eigen-latest/Core"
-#include "Eigen/Core"
+//#define M_VERBOSE  // TODO: cmake option like INTERNAL TELEMETRY ON
+#include "debug-util.h"
 
 // Gabriel (12-06-2025): Add stuff for test
 #include <fstream>
@@ -25,83 +20,38 @@
 
 #define unlikely(expr) __builtin_expect(!!(expr),0)
 #define likely(expr)   __builtin_expect(!!(expr),1)
+// TODO: perhaps move inside problem.hxx
+#include "chicago14a-lsolve.hxx"
+// #include "partialpivLU-NxN-lsolve.hxx" // TODO put generic solve here
+#include "linecircle2a-lsolve.hxx"
 
 namespace MiNuS {
 
-using namespace Eigen; // only used for linear solve
-
-#include "chicago14a-lsolve.hxx"
-
-template <problem P, typename F>
-__attribute__((always_inline)) inline void
-memoize_Hxt(C<F> __restrict *block/*, C<F> * __restrict memo*/ /* constants */)
-{
-  C<F> *const y = reinterpret_cast<C<F> *> (__builtin_assume_aligned(block,64));
-//  C<F> *const yc = reinterpret_cast<C<F> *> (__builtin_assume_aligned(memo,64));
-
-  y[11]=y[13]=y[25]=y[27]=y[39]=y[41]=y[53]=y[55]=y[67]=
-        y[68]=y[81]=y[82]=y[95]=y[96]=y[109]=y[110]=y[124]=
-        y[125]=y[138]=y[139]=y[152]=y[153]=y[166]=y[167]=
-        y[180]=y[181]=y[194]=y[195]=0;
-//  y[26]  = yc[0];
-//  y[40]  = yc[1];
-//  y[54]  = yc[2];
-//  y[69]  = yc[3];
-//  y[83]  = yc[4];
-//  y[97]  = yc[5];
-//  y[111] = yc[6];
-//  y[123] = yc[7];
-//  y[137] = yc[8];
-//  y[151] = yc[9];
-//  y[165] = yc[10];
-//  y[179] = yc[11];
-//  y[193] = yc[12];
-//  y[207] = yc[13];
-//  y[208] = yc[14];
-//  y[209] = yc[15];
-}
-
-template <problem P, typename F>
-__attribute__((always_inline)) inline void
-memoize_HxH(C<F> __restrict *block/*, C<F> * __restrict memo*/ /* constants */)
-{
-  C<F> *const y = reinterpret_cast<C<F> *> (__builtin_assume_aligned(block,64));
-//  C<F> *const yc = reinterpret_cast<C<F> *> (__builtin_assume_aligned(memo,64));
-
-  y[11]=y[13]=y[25]=y[27]=y[39]=y[41]=y[53]=y[55]=y[67]=
-        y[68]=y[81]=y[82]=y[95]=y[96]=y[109]=y[110]=y[124]=
-        y[125]=y[138]=y[139]=y[152]=y[153]=y[166]=y[167]=
-        y[180]=y[181]=y[194]=y[195]=0;
-//  y[26]  = yc[0];
-//  y[40]  = yc[1];
-//  y[54]  = yc[2];
-//  y[69]  = yc[3];
-//  y[83]  = yc[4];
-//  y[97]  = yc[5];
-//  y[111] = yc[6];
-//  y[123] = yc[7];
-//  y[137] = yc[8];
-//  y[151] = yc[9];
-//  y[165] = yc[10];
-//  y[179] = yc[11];
-//  y[193] = yc[12];
-//  y[207] = yc[13];
-//  y[208] = yc[14];
-//  y[209] = yc[15];
-}
 
 // THE MEAT //////////////////////////////////////////////////////////////////////
-// t: tracker settings
-// s_sols: start sols      
-// params: params of target as specialized homotopy params - P01 in SolveChicago
-// compute solutions sol_min...sol_max-1 within NSOLS
+//
+// INPUT
+//    s: tracker settings
+//    s_sols: start sols      
+//    params: parameters of the homotopy between start and end system. This is currently the
+//            parameters of the start system, followed by that of of target system as
+//            specialized homotopy params (P01 in tutorial and SolveChicago)
+//    
+// OUTPUT
+//    raw_solutions: compute solutions sol_min...sol_max-1 within all nsols
 // 
 template <problem P, typename F> void 
+__attribute__((no_sanitize("address")))
 minus_core<P, F>::
-track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> params_u[2*f::nparams], solution raw_solutions_u[f::nsols], unsigned sol_min, unsigned sol_max)
+track(const track_settings &s, 
+      const C<F> s_sols_u[f::nve*f::nsols], 
+      const C<F> params_u[2*f::nparams], 
+      solution raw_solutions_u[f::nsols], 
+      unsigned sol_min, unsigned sol_max)
 {
   const C<F> *s_sols = reinterpret_cast<C<F> *> (__builtin_assume_aligned(s_sols_u,64));
   const C<F> *params = reinterpret_cast<C<F> *> (__builtin_assume_aligned(params_u,64));
+
   solution *raw_solutions = reinterpret_cast<solution *> (__builtin_assume_aligned(raw_solutions_u,64));
   assert(sol_min <= sol_max && sol_max <= f::nsols);
   alignas(64) C<F> Hxt[NVEPLUS1 * f::nve]; 
@@ -120,9 +70,11 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
   C<F> *const dx4 = dx;
   F    *const dt = (F *)(dxdt + f::nve);
   C<F> *const HxH=Hxt;
-  Map<Matrix<C<F>, f::nve, NVEPLUS1>,Aligned> AA((C<F> *)Hxt,f::nve,NVEPLUS1);
+  Map < Matrix<C<F>, f::nve, NVEPLUS1 >, Aligned>
+      AA((C<F> *)Hxt, f::nve, NVEPLUS1); // Full Jacobian matrix (also reused for [Hx|H]) in Eigen format
   static constexpr F the_smallest_number = 1e-13; // XXX BENCHMARK THIS
   typedef minus_array<f::nve,F> v;
+  typedef numeric_subroutines<P,F> numerics;
 
   //  alignas(64) C<F> ycHxt[16]; 
   //  alignas(64) C<F> ycHxH[13];
@@ -158,12 +110,45 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
   solution *t_s = raw_solutions + sol_min;  // current target solution
   const C<F>* __restrict s_s = s_sols + sol_min*f::nve;    // current start solution
   for (unsigned sol_n = sol_min; sol_n < sol_max; ++sol_n) { // solution loop
+    LLOG("solution  id " << sol_n << "---------------------------------------------------\n"); 
     t_s->status = PROCESSING;
     bool end_zone = false;
     v::copy(s_s, x0);
     *t0 = 0; *dt = t_step;
+    
+#ifdef M_VERBOSE
+    LLOG("H must evaluate to 0 at start solution\n"); 
+    evaluate_HxH(x0t0, params, HxH);
+    LLOG(AA << std::endl);
+    
+#if 0
+    C<F> gt[f::nve*f::nsols] = { // linecircle debug
+      // solution 1
+      {-.8399999999999715, -.3803288051147313}, // x
+      {.03000000000008518, -1.140986415344194}  // y
+      // we dont include more sols now, just want it to find the one above
+      // TODO: make it real for your problem, to be more realistic in profiling
+    };
+   j 
+    LLOG("H|t=1 must evaluate to 0 at GT solution\n"); 
+    v::copy(gt, x0);
+    *t0 = 1;
+    LLOG("x0t0\n"); 
+    pprint((F *)x0t0, f::nve*2+1, true);
+    LLOG("H\n"); 
+    evaluate_HxH(x0t0, params, HxH);
+    std::cerr << AA << std::endl;
+
+    *t0 = 0;
+    // evaluate_HxH(x0t0, params, HxH);
+#endif
+#endif
+    
     char predictor_successes = 0;
     //std::cout << sol_min << std::endl;
+    // XXX print the values of H
+    // everywhere
+
     // track H(x,t) for t in [0,1]
     // TODO: due to precision, it is best from 1 to 0 as Bertini/Wampler suggests
     while (likely(t_s->status == PROCESSING && 1. - *t0 > the_smallest_number)) {
@@ -177,8 +162,11 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       if (unlikely(end_zone)) {
           if (unlikely(*dt > 1. - *t0)) *dt = 1 - *t0;
       } else if (unlikely(*dt > 1. - s.end_zone_factor_ - *t0)) *dt = 1. - s.end_zone_factor_ - *t0;
-      /// PREDICTOR /// in: x0t0,dt out: dx
-      /*  top-level code for Runge-Kutta-4
+      /// PREDICTOR ------------------------------------------------------------
+      //    in: x0t0, dt 
+      //    out: dx
+      //    
+      /*  high-level code for Runge-Kutta-4
           dx1 := solveHxTimesDXequalsminusHt(x0,t0);
           dx2 := solveHxTimesDXequalsminusHt(x0+(1/2)*dx1*dt,t0+(1/2)*dt);
           dx3 := solveHxTimesDXequalsminusHt(x0+(1/2)*dx2*dt,t0+(1/2)*dt);
@@ -186,10 +174,10 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
           (1/6)*dt*(dx1+2*dx2+2*dx3+dx4) */
       v::fcopy(x0t0, xt);
 
-      // dx1
+      // dx1 ----
       // evaluate_Hxt_constants(xt, params, ycHxt);
-      memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
-      evaluate_Hxt(xt, params, Hxt); // Outputs Hxt
+      memoize_Hxt(Hxt);/*, ycHxt);*/
+      evaluate_Hxt(xt, params, Hxt); // Outputs full Jacobian matrix Hxt
       // dx4_eigen = lu.compute(AA).solve(bb);
       // Gabriel: test hardcoded
       // Gabriel (09-12-2025): Output into file to study for now since Eigen is being a pussy!!
@@ -229,18 +217,15 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       ////  break;
       ////}
       //}
-      lsolve<P,F>(AA, dx4);
+      numerics::lsolve(AA, dx4);
       
-      // dx2
+      // dx2 ----
       const F one_half_dt = *dt*0.5;
-
       v::multiply_scalar_to_self(dx4, one_half_dt);
-
       v::add_to_self(xt, dx4);
       v::multiply_scalar_to_self(dx4, 2.);
       *t += one_half_dt;  // t0+.5dt
       evaluate_Hxt(xt, params, Hxt);
-      memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
 #if 0
       // Gabriel Saving each preditor dx2
       if(sol_n == sol_min) {
@@ -269,16 +254,16 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       ////  break;
       ////}
       //}
-      lsolve<P,F>(AA, dxi);
+      memoize_Hxt(Hxt);/*, ycHxt);*/
+      numerics::lsolve(AA, dxi);
 
-      // dx3
+      // dx3 ----
       v::multiply_scalar_to_self(dxi, one_half_dt);
       v::copy(x0t0, xt);
       v::add_to_self(xt, dxi);
       v::multiply_scalar_to_self(dxi, 4.);
       v::add_to_self(dx4, dxi);
       evaluate_Hxt(xt, params, Hxt);
-      memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
 #if 0
       // Gabriel Daving each preditor dx3
       if(sol_n == sol_min) {
@@ -307,9 +292,10 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       ////  break;
       ////}
       //}
-      lsolve<P,F>(AA, dxi);
+      memoize_Hxt(Hxt);/*, ycHxt);*/
+      numerics::lsolve(AA, dxi);
 
-      // dx4
+      // dx4 ----
       v::multiply_scalar_to_self(dxi, *dt);
       v::fcopy(x0t0, xt);
       v::add_to_self(xt, dxi);
@@ -317,7 +303,6 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       v::add_to_self(dx4, dxi);
       *t = *t0 + *dt;               // t0+dt
       evaluate_Hxt(xt, params, Hxt);
-      memoize_Hxt<P,F>(Hxt);/*, ycHxt);*/
 #if 0
       // Gabriel Daving each preditor dx4
       if(sol_n == sol_min) {
@@ -346,7 +331,8 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       //  break;
       //}
       }
-      lsolve<P,F>(AA, dxi);
+      memoize_Hxt(Hxt);/*, ycHxt);*/
+      numerics::lsolve(AA, dxi);
       v::multiply_scalar_to_self(dxi, *dt);
       v::add_to_self(dx4, dxi);
       v::multiply_scalar_to_self(dx4, 1./6.);
@@ -354,39 +340,43 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       // "dx1" = .5*dx1*dt, "dx2" = .5*dx2*dt, "dx3" = dx3*dt. Eigen vectorizes this:
       // dx4_eigen = (dx4_eigen* *dt + dx1_eigen*2 + dx2_eigen*4 + dx3_eigen*2)*(1./6.);
       
+      LLOG("Solution starting point " << std::endl);
+      LLOG("\t x0\n");
+      pprint(x0t0, f::nve, true);
+      LLOG("\t t0 " << *t0 << std::endl);
+      
       // make prediction
       v::fcopy(x0t0, x1t1);
       v::fadd_to_self((double *)x1t1, (double *)dxdt);
 
-      
-      /// CORRECTOR ///
+      LLOG("Prediction" << std::endl);
+      LLOG("\t x1\n");
+      pprint(x1t1, f::nve, true);
+      LLOG("\t t1 " << *t0 << std::endl);
+
+      /// CORRECTOR ------------------------------------------------------------
       char n_corr_steps = 0;
       bool is_successful;
       //if (t_s->num_steps ==0)
       //evaluate_HxH_constants_all_sols(x1t1, params, ycHxH);
       //evaluate_HxH_constants(x1t1, params, ycHxH);
-      /*
-      {
-        static std::mutex lock;
-        const std::lock_guard<std::mutex> guard(lock);
-         
-        if ( t_s->num_steps > 1)
-          for (unsigned i=0; i < 13; ++i) {
-            F err = std::norm(ycHxH[i]-previous[i]);
-            if (err > 1e-15) {
-              std::cerr << "Different " << i << " -------------------------------------------- " << err << std::endl;
-              std::cerr << "\tnow: " << ycHxH[i] << " previous: " << previous[i] << std::endl;
-            }
-          }
-        for (unsigned i=0; i < 13; ++i)
-          previous[i] = ycHxH[i];
-      }
-      */
-
+      /* {
+            static std::mutex lock;
+            const std::lock_guard<std::mutex> guard(lock);
+            if ( t_s->num_steps > 1)
+              for (unsigned i=0; i < 13; ++i) {
+                F err = std::norm(ycHxH[i]-previous[i]);
+                if (err > 1e-15) {
+                  LLOG("Different " << i << " -------------------------------------------- " << err << std::endl);
+                  LLOG("\tnow: " << ycHxH[i] << " previous: " << previous[i] << std::endl);
+                }
+              }
+            for (unsigned i=0; i < 13; ++i)
+              previous[i] = ycHxH[i];
+         } */
       do {
         ++n_corr_steps;
         evaluate_HxH(x1t1, params, HxH);
-        memoize_HxH<P,F>(HxH);//, ycHxH);
 #if 0
       // Gabriel Saving corrector first step
       if(n_corr_steps-1 ==0) {
@@ -420,7 +410,8 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
       //  break;
       //}
       }
-        lsolve<P,F>(AA, dx);
+        memoize_HxH(HxH);//, ycHxH);
+        numerics::lsolve(AA, dx);
         v::add_to_self(x1t1, dx);
         is_successful = v::norm2(dx) < s.epsilon2_ * v::norm2(x1t1); // |dx|^2/|x1|^2 < eps2
       } while (likely(!is_successful && n_corr_steps < s.max_corr_steps_));
@@ -463,6 +454,8 @@ track(const track_settings &s, const C<F> s_sols_u[f::nve*f::nsols], const C<F> 
     } // while (t loop)
     memcpy(t_s, x0t0, (f::nve*2+1)*sizeof(F));
     if (t_s->status == PROCESSING) t_s->status = REGULAR;
+
+    LLOG("Solution status " << (int)t_s->status << std::endl);
     ++t_s; s_s += f::nve;
 
   } // outer solution loop
@@ -502,6 +495,188 @@ RC_to_QT_format(const F rc[pp::nviews][4][3], F qt[M::nve])
   dc[1] = rc[0][3][1] - rc[2][3][1];
   dc[2] = rc[0][3][2] - rc[2][3][2];
   u::quat_transform(q2,dc, qt + 8 + 3);
+}
+
+// Returns all real solutions
+// The real_solutions array is fixed in size to NSOLS which is the max
+// number of solutions, which perfectly fits in memory. The caller must pass an
+// array with that minimum.
+template <problem P, typename F>
+inline void 
+minus_io<P, F>::
+all_real_solutions(typename M::solution raw_solutions[M::nsols], F real_solutions[M::nsols][M::nve], 
+                   unsigned id_sols[M::nsols], unsigned *nsols_real)
+{
+  typedef minus_array<M::nve,F> v;
+  *nsols_real = 0;
+  id_sols[*nsols_real] = 0;
+  for (unsigned sol=0; sol < M::nsols; ++sol) {
+    if (raw_solutions[sol].status == M::REGULAR && 
+        v::get_real(raw_solutions[sol].x, real_solutions[id_sols[*nsols_real]]))
+      id_sols[(*nsols_real)++] = sol;
+  }
+}
+
+template <problem P, typename F>
+inline void 
+minus_io<P, F>::
+all_regular_solutions(typename M::solution raw_solutions[M::nsols], C<F> regular_solutions[M::nsols][M::nve], 
+                   unsigned id_sols[M::nsols], unsigned *nsols_regular)
+{
+  typedef minus_array<M::nve,F> v;
+  *nsols_regular = 0;
+  id_sols[*nsols_regular] = 0;
+  for (unsigned sol=0; sol < M::nsols; ++sol) {
+    if (raw_solutions[sol].status == M::REGULAR) {
+      v::copy(raw_solutions[sol].x, regular_solutions[id_sols[*nsols_regular]]);
+      id_sols[(*nsols_regular)++] = sol;
+    }
+  }
+}
+
+//
+// Performs tests to see if there are potentially valid solutions,
+// without making use of ground truth using generic tests, e.g., no real roots 
+//
+// This is the generic implementation. It may be specialized for each 
+// problem tag
+// 
+template <problem P, typename F>
+inline bool 
+minus_io_common<P, F>::
+has_valid_solutions(const typename M::solution solutions[M::nsols])
+{
+  typedef minus_array<M::nve,F> v;
+  F real_solution[M::nve];
+  for (unsigned sol = 0; sol < M::nsols; ++sol) 
+    if (solutions[sol].status == M::REGULAR && v::get_real(solutions[sol].x, real_solution))
+      return true;
+  return false;
+}
+
+//
+// Searches for probe_solution among solutions directly.
+// 
+// A match will occur if every coordinte is within tolerance of the probe,
+// independently if it is real or not. 
+//
+// Multiple matches are ignored. If you need to get the minimum value, see the
+// probe_solutions implementation
+// 
+// This default implementation is exact, meaning:the exact numerical value is
+// sought. No normalizations to equivalent standard representations (eg,
+// homogeneous representative) are performed.
+// 
+// This is the generic default implementation. It may be specialized for each
+// problem tag to compare e.g. groups of variables as rotations
+// 
+//
+template <problem P, typename F>
+inline bool
+minus_io<P, F>::
+probe_solutions(
+    const typename M::solution solutions[M::nsols], 
+    C<F> probe_solution[M::nve])
+{
+  static constexpr F eps = 1e-3;
+  for (unsigned s = 0; s < M::nsols; ++s)  {
+    bool possible_match = true;
+    for (unsigned v = 0; v < M::nve; ++v) {
+      if (std::abs(solutions[s].x[v] - probe_solution[v]) > eps) {
+        possible_match = false;
+        break;
+      }
+    }
+    if (possible_match)
+      return true;
+  }
+  return false;
+}
+
+//
+// Searches for probe_solution among solutions.
+// 
+// This default implementation is exact, meaning: the exact numerical value is
+// sought. No normalizations to equivalent standard representations (eg,
+// homogeneous representative) are performed.
+//
+// A match will occur if the solution is real and every coordinte is within tolerance of the probe. 
+//
+// _all_ means: In case of multiple matches, the solution with minimum error is returned.
+// 
+// Safe: this guarantees a sensibly similar match numerically, but may not be
+// the fastest way to do it for your application. We coded it as efficiently as
+// possible, but it is likely overkill semantically. It does not affect the main
+// engine, that is why it is in a separate I/O class.
+// 
+// This is the generic default implementation. It may be specialized for each problem
+// tag to compare e.g. groups of variables as rotations
+// 
+template <problem P, typename F>
+inline bool
+minus_io<P, F>::
+probe_all_solutions(
+    const typename M::solution solutions[M::nsols], 
+    F probe_solution[M::nve],
+    unsigned *solution_index)
+{
+  typedef minus_array<M::nve,F> v;
+  static constexpr F eps = 1e-3;
+  F real_solution[M::nve];
+  bool already_found = false;
+  F error, min_error;
+  // Try to find the solution with minimum error
+  for (unsigned sol = 0; sol < M::nsols; ++sol) {
+    if (!v::get_real(solutions[sol].x, real_solution))
+      continue;
+
+    bool possible_match = true;
+    error = 0;
+    for (unsigned k=0; k < M::nve; ++k) {
+      // the testing in this function is strict, no RMS but strictly each
+      // coordinate within tolerance, even though the tolerance itself 
+      // might not be strict
+      F derror = std::abs(real_solution[k] - probe_solution[k]);
+      if (derror > eps) {
+        possible_match = false;
+        break;
+      }
+      error += derror;
+    }
+    
+    if (possible_match) {
+      if (already_found) {
+        LLOG("DEBUG: Found another similar solution at " << sol << std::endl);
+        LLOG("DEBUG: Error: " << error << std::endl);
+        if (error < min_error) {
+          min_error = error;
+          *solution_index = sol;
+        }
+      } else { // not already found
+        LLOG("DEBUG: Found a solution at " << sol << std::endl);
+        LLOG("DEBUG: Error: " << error << std::endl);
+        min_error = error;
+        *solution_index = sol;
+      }
+      already_found = true;
+    } else { // not a possible solution depsite being real
+      LLOG("DEBUG: Found a real solution but it is not close to ground truth: (sol,isvalid)" << sol << "," << solutions[sol].status << std::endl);
+#if 0
+      LLOG("\tErrors: \n");
+      for (unsigned s=0; s < data::n_gt_sols_; ++s) {
+        LLOG("Solution id " << s << ", errors as pairs (variable id, error): " << std::endl);
+        for (unsigned v=0; v < M::nve; ++v) {
+          LLOG("\t" << v << "\t" << std::abs(solutions[data::gt_sols_id_[s]].x[v] - data::gt_sols_[s][v]) << std::endl);
+        }
+      }
+#endif
+    }
+  }
+  
+  if (!already_found)
+    return false;
+      
+  return true;
 }
 
 //
@@ -560,25 +735,9 @@ probe_solutions(const typename M::solution solutions[M::nsols], solution_shape *
 
 // #undef NDEBUG
 
-#ifndef NDEBUG
-#include "debug-util.h"
-#endif
-
-/*
-template <problem P, typename F>
-inline bool 
-minus_io_14a<P, F>::
-probe_all_solutions(const typename M::solution solutions[M::nsols], solution_shape *probe_cameras,
-    unsigned *solution_index)
-{
-  complex vsolutions[M::nve][M::nsols];
-  
-  // populate standard format solutions_v from solutions (path info)
-  solutions_struct2vector(solutions, vsolutions);
-    
-  return probe_all_solutions(vsolutions, probe_cameras, solution_index);
-}
-*/
+//#ifndef NDEBUG
+//#include "debug-util.h"
+//#endif
 
 // like probe_solutions but tests all M::nsols in case more than one is close to
 // the probe. Use this for debugging / investigation
@@ -591,7 +750,7 @@ probe_all_solutions(const typename M::solution solutions[M::nsols], solution_sha
   typedef minus_array<M::nve,F> v; typedef minus_util<F> u;
   static constexpr F eps = 1e-3;
   F real_solution[M::nve];
-  bool found=false;
+  bool found = false;
   F min_rerror;
   for (unsigned sol = 0; sol < M::nsols; ++sol)  {
     if (!v::get_real(solutions[sol].x, real_solution))
@@ -599,29 +758,23 @@ probe_all_solutions(const typename M::solution solutions[M::nsols], solution_sha
     u::normalize_quat(real_solution);
     F rerror = u::rotation_error(real_solution, probe_cameras->q01);
     if (rerror < eps) {
-      if (found == true) {
-#ifndef NDEBUG
-        std::cerr << "Found another similar solution at " << sol << std::endl;
-        std::cerr << "Error: " << rerror << std::endl;
-#endif
+      if (found) {
+        LLOG("Found another similar solution at " << sol << std::endl);
+        LLOG("Error: " << rerror << std::endl);
         if (rerror < min_rerror) {
           min_rerror = rerror;
           *solution_index = sol;
         }
         
       } else {
-#ifndef NDEBUG
-        std::cerr << "Found a solution at " << sol << std::endl;
-        std::cerr << "Error: " << rerror << std::endl;
-#endif
+        LLOG("Found a solution at " << sol << std::endl);
+        LLOG("Error: " << rerror << std::endl);
         min_rerror = rerror;
         *solution_index = sol;
       }
       found = true;
     } else {
-#ifndef NDEBUG
-        std::cerr << "Solution is real but not close (sol,isvalid)" << sol << "," << solutions[sol].status << std::endl;
-#endif
+        LLOG("Solution is real but not close (sol,isvalid)" << sol << "," << solutions[sol].status << std::endl);
     }
   }
 
@@ -633,9 +786,7 @@ probe_all_solutions(const typename M::solution solutions[M::nsols], solution_sha
   u::normalize_quat(real_solution+4);
   F rerror = u::rotation_error(real_solution+4, probe_cameras->q02);
   if (rerror < eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: Rotation 02 also match\n";
-#endif
+    LLOG("probe: Rotation 02 also match\n");
     found = true;
   } else
     found = false;
@@ -656,24 +807,18 @@ probe_all_solutions(const typename M::solution solutions[M::nsols], solution_sha
   dt[2] = s->t01[2] - probe_cameras->t01[2]/scale_probe;
   
   if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: translation 01 also match\n";
-#endif
+    LLOG("probe: translation 01 also match\n");
     found = true;
   } else {
     dt[0] = s->t01[0] + probe_cameras->t01[0]/scale_probe;
     dt[1] = s->t01[1] + probe_cameras->t01[1]/scale_probe;
     dt[2] = s->t01[2] + probe_cameras->t01[2]/scale_probe;
     if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-      std::cerr << "probe: translation 01 also match\n";
-#endif
+      LLOG("probe: translation 01 also match\n");
       found = true;
     } else {
       found = false;
-#ifndef NDEBUG
-      std::cerr << "probe: translation 01 DO NOT match\n";
-#endif
+      LLOG("probe: translation 01 DO NOT match\n");
     }
   }
   }
@@ -689,33 +834,27 @@ probe_all_solutions(const typename M::solution solutions[M::nsols], solution_sha
   dt[2] = s->t02[2] - probe_cameras->t02[2]/scale_probe;
   
   if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: translation 02 also match\n";
-#endif
+    LLOG("probe: translation 02 also match\n");
     found = true;
   } else {
-    //    std::cerr << "dt fail atttempt 1 " << std::endl;
-    //    print(dt,3);
-    //    std::cerr << "t02 fail atttempt 1 " << std::endl;
-    //    print(s->t02,3);
-    //    std::cerr << "probe t02 fail atttempt 1 " << std::endl;
-    // print(probe_cameras->t02,3);
+    //    LLOG("dt fail atttempt 1 " << std::endl);
+    //    pprint(dt,3);
+    //    LLOG("t02 fail atttempt 1 " << std::endl);
+    //    pprint(s->t02,3);
+    //    LLOG("probe t02 fail atttempt 1 " << std::endl);
+    // pprint(probe_cameras->t02,3);
     
     dt[0] = s->t02[0] + probe_cameras->t02[0]/scale_probe;
     dt[1] = s->t02[1] + probe_cameras->t02[1]/scale_probe;
     dt[2] = s->t02[2] + probe_cameras->t02[2]/scale_probe;
     if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-      std::cerr << "probe: translation 02 also match\n";
-#endif
+      LLOG("probe: translation 02 also match\n");
       found = true;
     } else {
       found = false;
-#ifndef NDEBUG
-      std::cerr << "probe: translation 02 DO NOT match\n";
-      std::cerr << "dt" << std::endl;
-      print(dt,3);
-#endif
+      LLOG("probe: translation 02 DO NOT match\n");
+      LLOG("dt" << std::endl);
+      pprint(dt,3);
     }
   }
   }
@@ -733,10 +872,8 @@ minus_io_14a<P, F>::
 probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], solution_shape *probe_cameras,
     unsigned nsols, unsigned *solution_index)
 {
-#ifndef NDEBUG
-  std::cerr << "Test xxxxxxxxxxx" << std::endl;
-  std::cerr << "Nsols" <<  nsols << std::endl;
-#endif
+  LLOG("Test xxxxxxxxxxx" << std::endl);
+  LLOG("Nsols" <<  nsols << std::endl);
   typedef minus_util<F> u;
   static constexpr F eps = 1e-3;
   F real_solution[M::nve];
@@ -748,20 +885,16 @@ probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], solution_s
     F rerror = u::rotation_error(real_solution, probe_cameras->q01);
     if (rerror < eps) {
       if (found == true) {
-#ifndef NDEBUG
-        std::cerr << "Found another similar solution at " << sol << std::endl;
-        std::cerr << "Error: " << rerror << std::endl;
-#endif
+        LLOG("Found another similar solution at " << sol << std::endl);
+        LLOG("Error: " << rerror << std::endl);
         if (rerror < min_rerror) {
           min_rerror = rerror;
           *solution_index = sol;
         }
         
       } else {
-#ifndef NDEBUG
-        std::cerr << "Found a solution at " << sol << std::endl;
-        std::cerr << "Error: " << rerror << std::endl;
-#endif
+        LLOG("Found a solution at " << sol << std::endl);
+        LLOG("Error: " << rerror << std::endl);
         min_rerror = rerror;
         *solution_index = sol;
       }
@@ -777,9 +910,7 @@ probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], solution_s
   u::normalize_quat(real_solution+4);
   F rerror = u::rotation_error(real_solution+4, probe_cameras->q02);
   if (rerror < eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: Rotation 02 also match\n";
-#endif
+    LLOG("probe: Rotation 02 also match\n");
     found = true;
   } else
     found = false;
@@ -800,24 +931,18 @@ probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], solution_s
   dt[2] = s->t01[2] - probe_cameras->t01[2]/scale_probe;
   
   if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: translation 01 also match\n";
-#endif
+    LLOG("probe: translation 01 also match\n");
     found = true;
   } else {
     dt[0] = s->t01[0] + probe_cameras->t01[0]/scale_probe;
     dt[1] = s->t01[1] + probe_cameras->t01[1]/scale_probe;
     dt[2] = s->t01[2] + probe_cameras->t01[2]/scale_probe;
     if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-      std::cerr << "probe: translation 01 also match\n";
-#endif
+      LLOG("probe: translation 01 also match\n");
       found = true;
     } else {
       found = false;
-#ifndef NDEBUG
-      std::cerr << "probe: translation 01 DO NOT match\n";
-#endif
+      LLOG("probe: translation 01 DO NOT match\n");
     }
   }
   }
@@ -833,33 +958,27 @@ probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], solution_s
   dt[2] = s->t02[2] - probe_cameras->t02[2]/scale_probe;
   
   if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-    std::cerr << "probe: translation 02 also match\n";
-#endif
+    LLOG("probe: translation 02 also match\n");
     found = true;
   } else {
-    //    std::cerr << "dt fail atttempt 1 " << std::endl;
-    //    print(dt,3);
-    //    std::cerr << "t02 fail atttempt 1 " << std::endl;
-    //    print(s->t02,3);
-    //    std::cerr << "probe t02 fail atttempt 1 " << std::endl;
-    // print(probe_cameras->t02,3);
+    //    LLOG("dt fail atttempt 1 " << std::endl);
+    //    pprint(dt,3);
+    //    LLOG("t02 fail atttempt 1 " << std::endl);
+    //    pprint(s->t02,3);
+    //    LLOG("probe t02 fail atttempt 1 " << std::endl);
+    // pprint(probe_cameras->t02,3);
     
     dt[0] = s->t02[0] + probe_cameras->t02[0]/scale_probe;
     dt[1] = s->t02[1] + probe_cameras->t02[1]/scale_probe;
     dt[2] = s->t02[2] + probe_cameras->t02[2]/scale_probe;
     if (minus_3d<F>::dot(dt, dt) < eps*eps) {
-#ifndef NDEBUG
-      std::cerr << "probe: translation 02 also match\n";
-#endif
+      LLOG("probe: translation 02 also match\n");
       found = true;
     } else {
       found = false;
-#ifndef NDEBUG
-      std::cerr << "probe: translation 02 DO NOT match\n";
-      // std::cerr << "dt" << std::endl;
-      // print(dt,3);
-#endif
+      LLOG("probe: translation 02 DO NOT match\n");
+      // LLOG("dt" << std::endl);
+      // pprint(dt,3);
     }
   }
   }
@@ -896,9 +1015,9 @@ probe_all_solutions_quat(const F solutions_cameras[M::nsols][M::nve], F probe_ca
 
 // For speed, assumes input point implicitly has 3rd homog coordinate is 1
 // 
-template <typename F>
+template <problem P, typename F>
 inline void 
-minus_io_common<F>::
+minus_io_common<P,F>::
 invert_intrinsics(const F K[/*3 or 2 ignoring last line*/][ncoords2d_h], const double pix_coords[][ncoords2d], double normalized_coords[][ncoords2d], unsigned npts)
 {
   for (unsigned p=0; p < npts; ++p) {
@@ -911,9 +1030,9 @@ invert_intrinsics(const F K[/*3 or 2 ignoring last line*/][ncoords2d_h], const d
 
 // For speed, assumes input point implicitly has 3rd homog coordinate is 1
 // 
-template <typename F>
+template <problem P, typename F>
 inline void 
-minus_io_common<F>::
+minus_io_common<P,F>::
 invert_intrinsics_tgt(const F K[/*3 or 2 ignoring last line*/][ncoords2d_h], const double pix_tgt_coords[][ncoords2d], double normalized_tgt_coords[][ncoords2d], unsigned npts)
 {
   for (unsigned p=0; p < npts; ++p) {
@@ -927,9 +1046,9 @@ invert_intrinsics_tgt(const F K[/*3 or 2 ignoring last line*/][ncoords2d_h], con
 // Not sure if really necessary.
 // Seemed to be important for numerics / error scales at some point.
 // Normalizes line normals to unit
-template <typename F>
+template <problem P, typename F>
 inline void 
-minus_io_common<F>::
+minus_io_common<P,F>::
 normalize_lines(F lines[][ncoords2d_h], unsigned nlines)
 {
   for (unsigned l=0; l < nlines; ++l)
@@ -938,7 +1057,9 @@ normalize_lines(F lines[][ncoords2d_h], unsigned nlines)
 
 } // namespace minus
 
-#include "chicago14a.hxx"      // specific implementation of chicago 14a formulation
+
+#include "chicago14a.hxx"      // specific implementation of chicago problem, 14a formulation
+#include "linecircle2a.hxx"      // specific implementation of linecircle problem, 2a formulation
 //#include "cleveland14a.hxx"      // specific implementation of cleveland 14a formulation now in PLMP
 // #include <minus/phoenix10a.hxx>      // specific implementation of chicago 14a formulation
 // #include "chicago6a.hxx"

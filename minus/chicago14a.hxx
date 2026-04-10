@@ -11,6 +11,8 @@ struct eval<chicago14a, F> {
   static void inline  __attribute__((always_inline)) Hxt_constants(const C<F> * __restrict x /*x, t*/,    const C<F> * __restrict params, C<F> * __restrict y /*Hxt*/);
   static void inline  __attribute__((always_inline)) HxH_constants(const C<F> * __restrict x /*x, t*/,    const C<F> * __restrict params, C<F> * __restrict y /*HxH*/);
   static void inline  __attribute__((always_inline)) HxH_constants_all_sols(const C<F> * __restrict x /*x, t*/,    const C<F> * __restrict params, C<F> * __restrict y /*HxH*/);
+  static void inline  __attribute__((always_inline)) Hxt_memoize(C<F> __restrict *block/*, C<F> * __restrict memo*/ /* constants */);
+  static void inline  __attribute__((always_inline)) HxH_memoize(C<F> __restrict *block/*, C<F> * __restrict memo*/ /* constants */);
 };
 
 #include "chicago14a-Hxt.hxx"
@@ -212,13 +214,11 @@ point_tangents2lines(const typename M::f::settings &s, const F p[pp::nviews][pp:
       v::area2(p[0][i0],p[0][i1],p[0][i2])  < s.prefilter_area_degeneracy_eps_ ||  // retinal area.  Could be spherical area 
       v::area2(p[1][i0],p[1][i1],p[1][i2])  < s.prefilter_area_degeneracy_eps_ || 
       v::area2(p[2][i0],p[2][i1],p[2][i2])  < s.prefilter_area_degeneracy_eps_ )) {
-#ifndef NDEDBUG
-          std::cerr << "MINUS: area error ------------------------\n";
-          std::cerr << "Areas: " << 
+          LLOG("MINUS: area error ------------------------\n");
+          LLOG("Areas: " << 
             v::area2(p[0][i0],p[0][i1],p[0][i2]) << " "  << 
             v::area2(p[1][i0],p[1][i1],p[1][i2]) << " " << 
-            v::area2(p[2][i0],p[2][i1],p[2][i2]) << std::endl;
-#endif
+            v::area2(p[2][i0],p[2][i1],p[2][i2]) << std::endl);
     return false;
   }
   
@@ -262,25 +262,25 @@ point_tangents2lines(const typename M::f::settings &s, const F p[pp::nviews][pp:
       v::abs_angle_between_lines(plines[0], plines[12]) < s.prefilter_angle_degeneracy_eps_ ||
       v::abs_angle_between_lines(plines[1], plines[13]) < s.prefilter_angle_degeneracy_eps_ ||
       v::abs_angle_between_lines(plines[2], plines[14]) < s.prefilter_angle_degeneracy_eps_)) {
-#ifndef NDEDBUG
-    std::cerr << "MINUS: angle error ------------------------\n";
-    std::cerr << "Angles: " << 
-    v::abs_angle_between_lines(plines[0], plines[9])  << " " << 
-    v::abs_angle_between_lines(plines[1], plines[10]) << " " <<
-    v::abs_angle_between_lines(plines[2], plines[11]) << " " <<
+    LOG("MINUS: angle error ------------------------\n");
+    LOG(
+      "Angles: " << 
+      v::abs_angle_between_lines(plines[0], plines[9])  << " " << 
+      v::abs_angle_between_lines(plines[1], plines[10]) << " " <<
+      v::abs_angle_between_lines(plines[2], plines[11]) << " " <<
 
-    v::abs_angle_between_lines(plines[3], plines[9]) << " " <<
-    v::abs_angle_between_lines(plines[4], plines[10]) << " " <<
-    v::abs_angle_between_lines(plines[5], plines[11]) << " " <<
-          
-    v::abs_angle_between_lines(plines[6], plines[12]) << " " <<
-    v::abs_angle_between_lines(plines[7], plines[13]) << " " <<
-    v::abs_angle_between_lines(plines[8], plines[14]) << " " <<
-          
-    v::abs_angle_between_lines(plines[0], plines[12]) << " " <<
-    v::abs_angle_between_lines(plines[1], plines[13]) << " " <<
-    v::abs_angle_between_lines(plines[2], plines[14]);
-#endif
+      v::abs_angle_between_lines(plines[3], plines[9]) << " " <<
+      v::abs_angle_between_lines(plines[4], plines[10]) << " " <<
+      v::abs_angle_between_lines(plines[5], plines[11]) << " " <<
+            
+      v::abs_angle_between_lines(plines[6], plines[12]) << " " <<
+      v::abs_angle_between_lines(plines[7], plines[13]) << " " <<
+      v::abs_angle_between_lines(plines[8], plines[14]) << " " <<
+            
+      v::abs_angle_between_lines(plines[0], plines[12]) << " " <<
+      v::abs_angle_between_lines(plines[1], plines[13]) << " " <<
+      v::abs_angle_between_lines(plines[2], plines[14])
+    );
     return false;
   }
   return true;
@@ -476,6 +476,7 @@ minus<chicago14a, F>::solve_img(
   return solve(pn, tn, solutions_cams, id_sols, nsols_final, nthreads);
 }
 
+/* Some specializations to this problem ----------------------------------------------
 //
 // Performs tests to see if there are potentially valid solutions,
 // without making use of ground truth. 
@@ -485,13 +486,9 @@ inline bool
 minus_io<chicago14a, F>::
 has_valid_solutions(const typename M::solution solutions[M::nsols])
 {
-  typedef minus_array<M::nve,F> v;
-  F real_solution[M::nve];
-  for (unsigned sol = 0; sol < M::nsols; ++sol) 
-    if (solutions[sol].status == M::REGULAR && v::get_real(solutions[sol].x, real_solution))
-      return true;
-  return false;
+ // If desired, you may specialize this function here.
 }
+*/
 
 } // namespace minus
 #endif // chicago14a_hxx_
