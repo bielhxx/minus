@@ -96,6 +96,7 @@ track(const track_settings &s,
   //and see if I can get same than published on ENMC 2023. current max core temp
   //was to 80ºC from 100ºC
   //\Tests on Ctest (make test) works fine.
+  std::complex<double> jv;
   double jacobian_volume; // Det|Hx| at curr step
   double condition_number; // c at curr step
   double volthresh = 1e-5; // det|jac|_(x0,t0+dt) approx 0. 1e-32 works on
@@ -403,7 +404,8 @@ track(const track_settings &s,
         //for (unsigned i = 0; i < 14; ++i)
         //  if (singval(i) < epsilon_svd)
         //    singval(i) = 0;
-        jacobian_volume = singval.prod(); // Det|Hx| at curr step
+        jacobian_volume = singval.prod(); // |Det(Hx)| at curr step
+        jv = vol.determinant(); // Det|Hx| at curr step. jv = jacobian volume
         condition_number = singval(0)/singval(13); // c at curr step
       //if (jacobian_volume < volthresh && condition_number > cond_thresh){ // If blows up,
       //  std::cout << "ill-conditioned solution\n";                       // goes to the next
@@ -446,7 +448,8 @@ track(const track_settings &s,
       //\every singular value is near zero.
       if (jacobian_volume < volthresh && condition_number > cond_thresh)
         break;
-      t_s->det_Hx[t_s->num_steps] = jacobian_volume;
+      t_s->abs_det_Hx[t_s->num_steps] = jacobian_volume;
+      t_s->det_Hx[t_s->num_steps] = jv;
       t_s->condition_number_Hx[t_s->num_steps] = condition_number;
       t_s->time[t_s->num_steps] = *t0;
       //\Gabriel: before my additions only had this!
